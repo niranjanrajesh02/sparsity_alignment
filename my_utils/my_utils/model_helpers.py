@@ -4,6 +4,7 @@ import numpy as np
 from torch import nn
 import torch.nn.init as init
 from torchvision import models
+import torch.nn.functional as F 
 
 
 ### --- Model Initialization Helpers --- ###
@@ -58,12 +59,11 @@ def init_model(model_name, seed=0, trained=False):
 
 def get_layer_names(model):
     layer_names = []
-    for name, layer in model.named_modules():
-        # skip container modules (those that have submodules)
-        if len(list(layer.children())) == 0:
-            # skip Relu and dropout
-            if not isinstance(layer, (torch.nn.ReLU, torch.nn.Dropout)):
-                layer_names.append(name)
+    # forward pass to identify layers with weights
+    for name, module in model.named_modules():
+        if name=="input_layer" or isinstance(module, (nn.Conv2d, nn.Linear, nn.MultiheadAttention)):
+            layer_names.append(name)
+
     return layer_names[:-1]  # exclude the final classifier layer
 
 def get_nice_layer_names(model, layer_names):
@@ -90,7 +90,20 @@ def get_nice_layer_names(model, layer_names):
 ### --- Activation Extraction Helpers --- ###
 
 # Extract activations from a specified layer module given image data
-def get_layer_activations(model, layer_name, image_data, device_id=0):
+def get_layer_activations(model, layer_name, image_data, pool_method=None, target_dim=4096, device_id=0):
+    '''
+    collects activations from the specified layer by registering a forward hook.
+
+    Pool Method:
+    - if pool_method is None, no pooling is applied, returns full activations as flattened vectors
+    - if pool_method is global, applies global pooling to each feature map to get a single value per channel 
+        intuition: remove spatial feature info, keep only feature presence info
+    - if pool_method is 'adaptive', applies adaptive pooling to get target_dim sized vectors
+        intuition: reduce dimensionality to ~target_dim for all layers while preserving some spatial info
+    
+    '''
+    assert pool_method in [None, 'global', 'adaptive'], "pool_method must be one of None, 'global' or 'adaptive'"
+
     layer = dict(model.named_modules())[layer_name]
     activations = []
     def hook_fn(module, input, output):
@@ -100,16 +113,45 @@ def get_layer_activations(model, layer_name, image_data, device_id=0):
 
     model.to(f"cuda:{device_id}")
     with torch.no_grad():
-      for images in image_data:
+      for images, _ in image_data:
         images = images.to(f"cuda:{device_id}")
         _ = model(images)      
     handle.remove()
   
     acts = torch.cat(activations, dim=0)
     
-    # For convolutional layers, apply adaptive average pooling to reduce 
-    # spatial dimensions and approx match target_dim when flattened
-    target_dim = 4096 # fixing due to fc dimensions in VGG16
+    if pool_method == 'global':
+        if len(acts.shape) == 4:  
+            # conv layer outputs
+            if layer_name != 'input_layer':
+                acts = F.adaptive_avg_pool2d(acts, (1,1))
+                acts = acts.flatten(1)
+            
+            # input layer outputs (image space)
+            else:
+                n_channels = acts.shape[1]
+                target_dim = 100 # arbitary small to match conv layers
+                pool_dim = int(np.round(np.sqrt(target_dim/n_channels)))
+                apool = nn.AdaptiveAvgPool2d((pool_dim, pool_dim))
+                acts = apool(acts)
+                acts = acts.flatten(1)
+            
+
+    
+    elif pool_method == 'adaptive':
+        if len(acts.shape) > 2:
+            n_channels = acts.shape[1]
+            pool_dim = int(np.round(np.sqrt(target_dim/n_channels)))
+            apool = nn.AdaptiveAvgPool2d((pool_dim, pool_dim))
+            acts = apool(acts)
+            acts = acts.flatten(1)
+
+
+
+    elif pool_method is None:
+        if len(acts.shape) > 2:
+            acts = acts.flatten(1) 
+    
 
     if len(acts.shape) > 2:
       n_channels = acts.shape[1]
@@ -117,18 +159,11 @@ def get_layer_activations(model, layer_name, image_data, device_id=0):
       apool = nn.AdaptiveAvgPool2d((pool_dim, pool_dim))
       acts = apool(acts)
       acts = acts.flatten(1)
-    error_dim = abs(acts.shape[1] - target_dim)
-    if error_dim > 1000:
-        print(f"Warning: extracted acts dim {acts.shape[1]} differs from target dim {target_dim} by {error_dim} \n Layer: {layer_name}, original shape: {shape_info}")
-
+    
     # bound acts and remove nans
     acts = acts.nan_to_num_(posinf=1e6, neginf=-1e6, nan=0.0)
-
     max_val = torch.max(torch.abs(acts))
-    # Normalize to keep within [-max_val, max_val]
-    if max_val > 1e6 and max_val != 0:
-        scale = 1e6 / max_val
-        acts = acts * scale
+
     
     return acts.numpy()
 

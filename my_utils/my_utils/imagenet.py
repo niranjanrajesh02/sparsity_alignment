@@ -8,47 +8,43 @@ from torch.utils.data import Subset
 
 
 
-def get_imagenet_dataloaders(train_dir, val_dir,batch_size=128, num_workers=4):
-  train_tf = transforms.Compose([
-      transforms.RandomResizedCrop(224),
-      transforms.RandomHorizontalFlip(),
-      transforms.ToTensor(),
-      transforms.Normalize(mean=[0.485,0.456,0.406],
-                          std=[0.229,0.224,0.225]),
-  ])
-  val_tf = transforms.Compose([
+def get_imagenet_dataloader(data_dir, val=True,batch_size=128, num_workers=4, subset_num=None, shuffle=True):
+  tf=None
+  if val:
+    tf = transforms.Compose([
       transforms.Resize(256),
       transforms.CenterCrop(224),
       transforms.ToTensor(),
       transforms.Normalize(mean=[0.485,0.456,0.406],
                           std=[0.229,0.224,0.225]),
   ])
+  else:
+    tf = transforms.Compose([
+      transforms.RandomResizedCrop(224),
+      transforms.RandomHorizontalFlip(),
+      transforms.ToTensor(),
+      transforms.Normalize(mean=[0.485,0.456,0.406],
+                          std=[0.229,0.224,0.225]),
+  ])
   
-  trainsub_loader = DataLoader(
-      datasets.ImageFolder(train_dir, train_tf),
-      batch_size=batch_size, shuffle=False,
-      num_workers=num_workers, pin_memory=True
+  dataset = datasets.ImageFolder(data_dir, tf)
+    
+  # Apply subset if specified
+  if subset_num is not None:
+      indices = torch.randperm(len(dataset))[:subset_num]
+      dataset = Subset(dataset, indices)
+  
+  # Create DataLoader once
+  dl = DataLoader(
+      dataset,
+      batch_size=batch_size,
+      shuffle=shuffle,
+      num_workers=num_workers,
+      pin_memory=True
   )
+  
+  return dl
 
-
-  # subset 1000 imgs for quick eval
-  random_idx = torch.randperm(len(trainsub_loader.dataset))[:1000]
-
-  train_loader = torch.utils.data.DataLoader(
-      Subset(trainsub_loader.dataset, random_idx),
-      batch_size=trainsub_loader.batch_size,
-      shuffle=False,
-      num_workers=trainsub_loader.num_workers,
-  )
-
-  val_loader = DataLoader(
-      datasets.ImageFolder(val_dir, val_tf),
-      batch_size=batch_size, shuffle=False,
-      num_workers=num_workers, pin_memory=True
-  )
-
-
-  return train_loader, val_loader
 
 
 
@@ -62,7 +58,7 @@ def eval_model_val(model, val_dl, device_id=0):
   total = 0
 
   with torch.no_grad():
-    for images, labels in tqdm(val_dl, desc="Evaluating Model on Val Set"):
+    for images, labels in val_dl:
       images = images.to(device)
       labels = labels.to(device)
 

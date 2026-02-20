@@ -15,24 +15,29 @@ def verify_sparsity(W_s, sparsity_k, name):
 
 
 ### --- Pruning Methods --- ###
-def svd_prune_matrix(module, sparsity_k, return_count=False, MHA_flag=False):
+def svd_prune_matrix(W, sparsity_k, return_count=False):
     # "Prune" the weight matrix using low-rank approximation via SVD
     # sparsity_k is the fraction of effective weights needed to be retained
     # effective weights are the number of parameters in the low-rank representation 
+    conv_W = None
+    if len(W.shape) > 2:
+        conv_W = W
+        W = W.view(W.shape[0], -1)  # flatten to 2D if needed
 
-    W = module.weight if not MHA_flag else module.in_proj_weight
     m,n = W.shape
     max_rank = min([m,n])
     rank_k = max(1, round((sparsity_k * m * n) / (m + n + 1))) # rank needed to retain k fraction of weights
- 
     U, S, Vh = torch.linalg.svd(W, full_matrices=False)
     U_k = U[:, :rank_k]
     S_k = torch.diag(S[:rank_k])
     Vh_k = Vh[:rank_k, :]
     W_lowrank = torch.matmul(U_k, torch.matmul(S_k, Vh_k))
+    eff_param_count = U_k.numel() + rank_k + Vh_k.numel()
+
+    if conv_W is not None:
+        W_lowrank = W_lowrank.view_as(conv_W) # reshape back to conv shape
 
     if return_count:
-        eff_param_count = U_k.numel() + rank_k + Vh_k.numel()
         return W_lowrank, eff_param_count
 
     else:
@@ -40,17 +45,14 @@ def svd_prune_matrix(module, sparsity_k, return_count=False, MHA_flag=False):
 
 
 def prune_matrix(module, sparsity_k, prune_method='random', MHA_flag=False):
-    assert prune_method in ['random', 'amp']
 
     W = module.weight if not MHA_flag else module.in_proj_weight
     with torch.no_grad():
         W_flat = W.view(-1)
         num_weights_to_keep = round(sparsity_k * W_flat.numel()) # number of weights to keep so that k fraction is retained
         
-
         if prune_method == 'svd':
-            W_sparse = svd_prune_matrix(module, sparsity_k, MHA_flag=MHA_flag)
-
+            W_sparse = svd_prune_matrix(W, sparsity_k)
         else:
             if prune_method == 'random':
                 indices = torch.randperm(W_flat.numel())[:num_weights_to_keep]
@@ -62,11 +64,12 @@ def prune_matrix(module, sparsity_k, prune_method='random', MHA_flag=False):
             W_sparse = (W_flat * mask).view_as(W)
 
         module.weight.copy_(W_sparse) if not MHA_flag else module.in_proj_weight.copy_(W_sparse)
+
     return W_sparse
 
 
 ### --- Main Pruning Function --- ###
-def prune_model(model, arch, method='random', sparsity_k=0.5):
+def prune_model(model, arch, method='random', target='all', sparsity_k=0.5):
     """
     Prune the weights of the given model by zeroing out a fraction of the weights.
         For conv layers, pruning is achieved randomly on weights across all channels.
@@ -76,6 +79,7 @@ def prune_model(model, arch, method='random', sparsity_k=0.5):
         arch: Architecture name
         method: Pruning method ('random', 'amp' and 'svd' supported).
         sparsity_k: Fraction of weights to keep (between 0 and 1).
+        target: Which weights to prune ('all' or layer_name)
     Returns:
         The pruned model.
 
@@ -83,17 +87,18 @@ def prune_model(model, arch, method='random', sparsity_k=0.5):
 
     assert 0.0 <= sparsity_k <= 1.0, "sparsity_k must be between 0 and 1."
     assert arch in ["vgg16", "resnet18", "vit_b_16", "convnext_b"]
-
+    assert method in ['random', 'amp', 'svd'], "Unsupported pruning method."
     layer_names = []
     # forward pass to identify layers with weights
     for name, module in model.named_modules():
         if isinstance(module, (nn.Conv2d, nn.Linear, nn.MultiheadAttention)):
             layer_names.append(name)
+    assert target in ['all'] + layer_names, "Unsupported pruning target"
 
 
     layer_names = layer_names[:-1]  # exclude the final classification layer
-    layers_to_sparsify = layer_names #TODO: Add options for target_layers
-    print(f'Pruning {len(layers_to_sparsify)} layers randomly with sparsity k={sparsity_k}')
+    layers_to_sparsify = layer_names if target=="all" else [target]
+    
 
     if sparsity_k == 1.0:
         print("Sparsity k=1.0, no pruning applied.")
@@ -115,7 +120,7 @@ def prune_model(model, arch, method='random', sparsity_k=0.5):
             W_s = prune_matrix(module, sparsity_k, prune_method=method, MHA_flag=True)
             
         # Verify sparsity to be within tolerance (5%)
-        if W_s is not None:
+        if W_s is not None and method != 'svd':
             verify_sparsity(W_s, sparsity_k, name)
 
     return model
