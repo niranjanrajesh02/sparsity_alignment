@@ -5,10 +5,10 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 from torch.utils.data import Subset
+import numpy as np
 
 
-
-def get_imagenet_dataloader(data_dir, val=True,batch_size=128, num_workers=4, subset_num=None, shuffle=True):
+def get_imagenet_dataloader(data_dir, val=True,batch_size=128, num_workers=4, subset_num=None):
   tf=None
   if val:
     tf = transforms.Compose([
@@ -31,22 +31,36 @@ def get_imagenet_dataloader(data_dir, val=True,batch_size=128, num_workers=4, su
     
   # Apply subset if specified
   if subset_num is not None:
-      indices = torch.randperm(len(dataset))[:subset_num]
+      # indices = torch.randperm(len(dataset))[:subset_num] # random subset (not class balanced)
+      targets = np.array(dataset.targets)          
+      classes = np.unique(targets)
+      samples_per_class = subset_num // len(classes)
+      if samples_per_class > 0:
+        indices = np.concatenate([
+            np.random.choice(np.where(targets == c)[0], samples_per_class, replace=False)
+            for c in classes
+        ]).tolist()
+      else:
+        indices = torch.randperm(len(dataset))[:subset_num].tolist() # if subset_num is smaller than number of classes, just take random subset (not class balanced)
+
       dataset = Subset(dataset, indices)
   
   # Create DataLoader once
   dl = DataLoader(
       dataset,
       batch_size=batch_size,
-      shuffle=shuffle,
+      shuffle=False,
       num_workers=num_workers,
       pin_memory=True
   )
   
   return dl
 
-
-
+def extract_labels(dataloader):
+    labels = []
+    for _, y in dataloader:
+        labels.append(y)
+    return torch.cat(labels).numpy()
 
 def eval_model_val(model, val_dl, device_id=0):
   device = torch.device(f'cuda:{device_id}' if torch.cuda.is_available() else 'cpu')

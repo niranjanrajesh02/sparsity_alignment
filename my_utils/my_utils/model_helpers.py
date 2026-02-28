@@ -41,6 +41,7 @@ def init_model(model_name, seed=0, trained=False):
 
     model = None
     weights_str = "IMAGENET1K_V1" if trained else None
+    
     if model_name == 'vgg16':
         model = models.vgg16(weights=weights_str)
     elif model_name == 'resnet18':
@@ -57,14 +58,17 @@ def init_model(model_name, seed=0, trained=False):
     return model    
 
 
-def get_layer_names(model):
+def get_layer_names(model, ignore_classifier=True):
     layer_names = []
     # forward pass to identify layers with weights
     for name, module in model.named_modules():
         if name=="input_layer" or isinstance(module, (nn.Conv2d, nn.Linear, nn.MultiheadAttention)):
             layer_names.append(name)
 
-    return layer_names[:-1]  # exclude the final classifier layer
+    if ignore_classifier:
+        layer_names = layer_names[:-1]  # exclude the final classifier layer
+    
+    return layer_names
 
 def get_nice_layer_names(model, layer_names):
     nice_layer_names = []
@@ -112,6 +116,7 @@ def get_layer_activations(model, layer_name, image_data, pool_method=None, targe
 
 
     model.to(f"cuda:{device_id}")
+    model.eval()
     with torch.no_grad():
       for images, _ in image_data:
         images = images.to(f"cuda:{device_id}")
@@ -162,8 +167,6 @@ def get_layer_activations(model, layer_name, image_data, pool_method=None, targe
     
     # bound acts and remove nans
     acts = acts.nan_to_num_(posinf=1e6, neginf=-1e6, nan=0.0)
-    max_val = torch.max(torch.abs(acts))
-
     
     return acts.numpy()
 
@@ -178,3 +181,5 @@ def count_weights(model):
             nonzero_weights += torch.sum(param != 0).item()
     return nonzero_weights, total_weights
 
+def save_model_state(model, path):
+    torch.save(model.state_dict(), path)

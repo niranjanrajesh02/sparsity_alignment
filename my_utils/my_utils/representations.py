@@ -1,5 +1,6 @@
 import numpy as np
 from sklearn.decomposition import PCA
+from sklearn.neighbors import KNeighborsClassifier
 
 
 def compute_effective_dim(activations):
@@ -19,11 +20,18 @@ def compute_pca_dim(activations, variance_threshold=0.95):
     pca_dim = np.searchsorted(cumulative_variance, variance_threshold) + 1 # +1 because searchsorted returns the index where the threshold would be inserted to maintain order
     return pca_dim
 
-## Effective Dim (PCA) ##
-# https://github.com/EricElmoznino/encoder_dimensionality/blob/main/custom_model_tools/eigenspectrum.py
-# pca.fit(activations)
-# eigenspectrum = pca.explained_variance_
-# eigspec.sum() ** 2 / (eigspec**2).sum()
+def compute_knn_acc(activations, labels):
+    knn = KNeighborsClassifier(
+        n_neighbors=9,
+        algorithm='brute',
+        metric='cosine')
+    
+    knn.fit(activations, labels)
+    accuracy = knn.score(None, labels)
+    
+    return accuracy
+
+
 
 
 

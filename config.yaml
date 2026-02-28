@@ -1,8 +1,22 @@
+# global configs
 imagenet_train: /mnt/cogsci/ILSVRC2012/training/
 imagenet_val: /mnt/cogsci/KhoslaLab/ILSVRC2012/valid
 project_path: /home/nirajesh/sparsity_alignment/
 device_id: 1
-prune_method: amp
-metric: pca_dim
-prune_all: False
+prune_all: True
 dataset_size: 10000
+prune_method: 
+
+#for 1_dimensionality_reduction
+dim_metric: eff_dim
+
+
+# for 2_self_alignment
+alignment_metric: rsa
+alignment_distance: correlation
+alignment_correlation: pearson
+
+
+
+# for 4_retrain
+reinit_classifier: False
