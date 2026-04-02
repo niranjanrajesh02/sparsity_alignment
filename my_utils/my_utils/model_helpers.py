@@ -1,14 +1,16 @@
+import os
 import torch
 import random
 import numpy as np
-from torch import nn
+from torch import nn, seed
 import torch.nn.init as init
 from torchvision import models
 import torch.nn.functional as F 
-
+    
 
 ### --- Model Initialization Helpers --- ###
 def set_seed(seed):
+    os.environ['PYTHONHASHSEED'] = str(seed)
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
@@ -29,7 +31,7 @@ class ModelWithInputLayer(nn.Module):
         return self.model(x)
 
 
-def init_model(model_name, seed=0, trained=False):
+def init_model(model_name, trained=False, seed=0, state_path=None):
     assert model_name in [
         'vgg16',
         'resnet18',
@@ -41,21 +43,61 @@ def init_model(model_name, seed=0, trained=False):
 
     model = None
     weights_str = "IMAGENET1K_V1" if trained else None
+    print(f"Initializing model {model_name} with pretrained={trained}.")
     
     if model_name == 'vgg16':
-        model = models.vgg16(weights=weights_str)
-    elif model_name == 'resnet18':
-        model = models.resnet18(weights=weights_str)
-    elif model_name == 'resnet50':
-        model = models.resnet50(weights=weights_str)
-    elif model_name == 'convnext_b':
-        model = models.convnext_base(weights=weights_str)   
-    elif model_name == 'vit_b_16':
-        model = models.vit_b_16(weights=weights_str)
+        model = models.vgg16_bn(weights=weights_str)
+    
+    # VGG init for untrained
+    if trained == False:
 
-    # add input wrapper
+        if state_path is not None:
+            # get the net property from state dict and load
+            state_dict = torch.load(state_path)
+            if 'net' in state_dict:
+                model.load_state_dict(state_dict['net'])
+            else:
+                model.load_state_dict(state_dict)
+            print(f"Model state loaded from {state_path}")
+        else:
+            gen = torch.Generator()
+            gen.manual_seed(seed)
+            for m in model.modules():
+                if isinstance(m, nn.Conv2d):
+                    nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu', generator=gen)
+                    if m.bias is not None:
+                        nn.init.constant_(m.bias, 0)
+                elif isinstance(m, nn.Linear):
+                    nn.init.normal_(m.weight, mean=0, std=0.01, generator=gen)
+                    nn.init.constant_(m.bias, 0)
+
     model = ModelWithInputLayer(model)
-    return model    
+
+    return model
+
+
+def load_model(model_name, model_dir, pretrained=False):
+    mn = model_name.lower().split('_')[0]
+    seed_num = model_name.lower().split('_')[1].replace('seed','')
+
+
+    assert mn in ["vgg16", "resnet18"], f"Model {model_name} not supported for loading."
+
+    if pretrained: 
+        model = init_model(mn, trained=True)
+    else:
+        model_path = f'{model_dir}/{mn}_trained_seed_{seed_num}.pth'
+        model = init_model(mn, trained=False, seed=seed_num, state_path=model_path)
+
+    return model
+
+    
+
+
+
+
+    
+
 
 
 def get_layer_names(model, ignore_classifier=True):
@@ -90,6 +132,15 @@ def get_nice_layer_names(model, layer_names):
         nice_layer_names.append(f"{layer_type.replace('2d','')}{counters[layer_type]}")
 
     return nice_layer_names
+
+
+
+
+
+
+
+
+
 
 ### --- Activation Extraction Helpers --- ###
 

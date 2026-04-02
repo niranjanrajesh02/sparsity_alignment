@@ -12,20 +12,17 @@ from my_utils.model_helpers import set_seed, init_model, save_model_state
 from my_utils.finetune import finetune_classifier, top5_top1_accuracy
 
 
-def expt_main(prune_method='random'):
+def expt_main():
 
     ## **** Config Args ****
     config = BaseConfig(parse_config('./config.yaml'))
     device = torch.device(f"cuda:{config.device_id}" if torch.cuda.is_available() else "cpu")
     val_dir = config.imagenet_val
     train_dir = config.imagenet_train
-    # prune_method = config.prune_method
+    
+    prune_method = config.prune_method
     reinit_classifier = config.reinit_classifier
-    num_val_images = config.dataset_size
-    if reinit_classifier:
-        num_epochs = 30
-    else:
-        num_epochs = 20
+    num_epochs = 50
 
     # setup
     set_seed(0) # for reproducibility
@@ -34,16 +31,16 @@ def expt_main(prune_method='random'):
     model.eval()
 
     train_dl = get_imagenet_dataloader(train_dir, val=False, batch_size=256, num_workers=4)
-    val_dl = get_imagenet_dataloader(val_dir, val=True, batch_size=256, num_workers=4, subset_num=num_val_images)
+    val_dl = get_imagenet_dataloader(val_dir, val=True, batch_size=256, num_workers=4)
     print(f"Setup complete. Imagenet dataloaders (Train_N: {len(train_dl.dataset)}, Val_N: {len(val_dl.dataset)}) and VGG16 ready.")
 
     # results init
-    sparsity_levels = [0.1, 0.2, 0.5, 0.7,  1] # 0.1 - 10% weights remaining, 1 - all weights
+    sparsity_levels = [0.1, 0.3, 0.5, 0.7, 0.9, 1] # 0.1 - 10% weights remaining, 1 - all weights
  
     val_acc_results_df = pandas.DataFrame(columns=[f'sparsity_{k}' for k in sparsity_levels]) 
 
     results_path = config.project_path + '4_retrain/results/'
-    reinit_suffix = 'reinit' if reinit_classifier else ''
+    reinit_suffix = '_reinit' if reinit_classifier else ''
     os.makedirs(results_path, exist_ok=True)
 
     for ki, k in enumerate(sparsity_levels):
@@ -55,6 +52,7 @@ def expt_main(prune_method='random'):
         print(f"\nEvaluating sparsity level {k} ({ki+1}/{len(sparsity_levels)}) with {prune_method} pruning.")
         if k==1:
             print("No pruning applied, evaluating original model.")
+            model.to(device)
             val_acc = top5_top1_accuracy(model, val_dl, device)
 
         else:
@@ -73,13 +71,11 @@ def expt_main(prune_method='random'):
 
         val_acc_results_df.loc[0, f'sparsity_{k}'] = val_acc[0]
         val_acc_results_df.loc[1, f'sparsity_{k}'] = val_acc[1]
-        save_model_state(ft_model, os.path.join(results_path, f'vgg16_finetuned_{prune_method}_{k}_{reinit_suffix}.pt'))
+        save_model_state(ft_model, os.path.join(results_path, f'saved_models/vgg16_finetuned_{prune_method}_{k}_{reinit_suffix}.pt'))
 
         #save intermediate results
-        val_acc_results_df.to_csv(os.path.join(results_path, f'vgg_val_acc_{prune_method}_{reinit_suffix}.csv'), index=False)
+        val_acc_results_df.to_csv(os.path.join(results_path, f'vgg_ftval_acc_{prune_method}{reinit_suffix}.csv'), index=False)
     
 
 if __name__ == "__main__":
-    expt_main(prune_method='random')
-    expt_main(prune_method='amp')
-    expt_main(prune_method='svd')
+    expt_main()

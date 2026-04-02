@@ -3,6 +3,18 @@ from scipy.spatial.distance import pdist, squareform
 from scipy.stats import pearsonr, spearmanr, kendalltau
 
 
+def compute_RDM(X, dist_metric='correlation', bounded=False):
+    # X is (n_samples, n_features) matrix of activations for a system
+    if dist_metric=='correlation':
+      X_dist=1-np.corrcoef(X)
+      if bounded:
+         X_dist = X_dist/2
+    elif dist_metric=='euclidean':
+      X_dist=squareform(pdist(X, metric='euclidean'))
+
+
+    return X_dist
+
 def compute_RSA(X,Y, dist_metric='correlation', corr_metric='pearson'):
     # X and Y are (n_samples, n_features) matrices of activations for two systems
 
@@ -12,12 +24,9 @@ def compute_RSA(X,Y, dist_metric='correlation', corr_metric='pearson'):
     Y = Y - Y.mean(axis=0, keepdims=True)
     Y = Y / (np.linalg.norm(Y, axis=1, keepdims=True) + 1e-8)
     
-    if dist_metric=='correlation':
-      X_dist=1-np.corrcoef(X)
-      Y_dist=1-np.corrcoef(Y)
-    elif dist_metric=='euclidean':
-      X_dist=squareform(pdist(X, metric='euclidean'))
-      Y_dist=squareform(pdist(Y, metric='euclidean'))
+    # Compute RDMs
+    X_dist = compute_RDM(X, dist_metric=dist_metric)
+    Y_dist = compute_RDM(Y, dist_metric=dist_metric)
 
     X_dist_flat = X_dist[np.triu_indices(X_dist.shape[0], k=1)]
     Y_dist_flat = Y_dist[np.triu_indices(Y_dist.shape[0], k=1)]
@@ -49,3 +58,5 @@ def vectorized_correlation(X,Y):
 
 
     return numerator / denominator
+
+

@@ -2,12 +2,14 @@
 imagenet_train: /mnt/cogsci/ILSVRC2012/training/
 imagenet_val: /mnt/cogsci/KhoslaLab/ILSVRC2012/valid
 project_path: /home/nirajesh/sparsity_alignment/
-device_id: 1
+device_id: 2
 prune_all: True
 dataset_size: 10000
-prune_method: 
+prune_method: random
+seed: 0
 
-#for 1_dimensionality_reduction
+
+#for 1_representationa_space
 dim_metric: eff_dim
 
 
@@ -19,4 +21,7 @@ alignment_correlation: pearson
 
 
 # for 4_retrain
-reinit_classifier: False
+reinit_classifier: True
+
+# for 5_train_twins
+percent_weights: 0.6

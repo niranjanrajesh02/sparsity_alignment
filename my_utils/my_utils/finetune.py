@@ -73,7 +73,7 @@ def train_epoch(model, loader, optim, criterion, device):
 
     return running_loss / total, correct / total
 
-def evaluate(model, loader, criterion, device):
+def evaluate_epoch(model, loader, criterion, device):
     model.eval()
     running_loss, correct, total = 0.0, 0, 0
     with torch.no_grad():
@@ -107,7 +107,6 @@ def top5_top1_accuracy(model, loader, device):
     return top1_acc, top5_acc
 
 
-
 def finetune_classifier(
     model,
     train_loader,
@@ -118,7 +117,8 @@ def finetune_classifier(
     lr=1e-3,
     weight_decay=1e-4,
     patience=5,
-    min_delta=1e-4
+    min_delta=1e-4,
+    momentum=0.9
 ):
     ft_model = copy.deepcopy(model)  # don't mutate the original
     classifier_name = get_layer_names(ft_model, ignore_classifier=False)[-1]  
@@ -128,7 +128,7 @@ def finetune_classifier(
     criterion = nn.CrossEntropyLoss()
 
     trainable_params = filter(lambda p: p.requires_grad, ft_model.parameters())
-    optimizer = optim.SGD(trainable_params, lr=lr, weight_decay=weight_decay, momentum=0.9)
+    optimizer = optim.SGD(trainable_params, lr=lr, weight_decay=weight_decay, momentum=momentum)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=num_epochs  
     )
@@ -138,7 +138,7 @@ def finetune_classifier(
 
     for epoch in range(num_epochs):
         train_loss, train_acc = train_epoch(ft_model, train_loader, optimizer, criterion, device)
-        val_loss, val_acc = evaluate(ft_model, val_loader, criterion, device)
+        val_loss, val_acc = evaluate_epoch(ft_model, val_loader, criterion, device)
         scheduler.step()
 
         print(
@@ -162,3 +162,53 @@ def finetune_classifier(
     print(f"Final Top-1 Accuracy: {top1_acc:.4f}, Top-5 Accuracy: {top5_acc:.4f}")
 
     return ft_model, (top1_acc, top5_acc)
+
+def train_vgg_model(
+    model,
+    train_loader,
+    val_loader,
+    device,
+    num_epochs=100,
+    lr=1e-2,
+    weight_decay=5e-4,
+    momentum=0.9,
+    patience=5,
+    min_delta=1e-4
+):
+    t_model = copy.deepcopy(model)  # don't mutate the original
+    t_model.to(device)
+
+    criterion = nn.CrossEntropyLoss()
+
+    optimizer = optim.SGD(t_model.parameters(), lr=lr, weight_decay=weight_decay, momentum=momentum)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
+
+    early_stopping = EarlyStopping(patience=patience, min_delta=min_delta)
+
+    for epoch in range(num_epochs):
+        train_loss, train_acc = train_epoch(t_model, train_loader, optimizer, criterion, device)
+        val_loss, val_acc = evaluate_epoch(t_model, val_loader, criterion, device)
+        scheduler.step()
+
+
+        print(
+            f"  Epoch [{epoch+1}/{num_epochs}] "
+            f"Train Loss: {train_loss:.4f} Acc: {train_acc:.4f} | "
+            f"Val Loss: {val_loss:.4f} Acc: {val_acc:.4f}",
+            f"[ES counter: {early_stopping.counter}/{patience}]"
+        )
+
+        early_stopping.step(val_acc, t_model)
+        if early_stopping.should_stop:
+            print("Early stopping triggered. Restoring best model state.")
+            break
+
+     # restore best checkpoint
+    t_model = early_stopping.restore_best(t_model)
+
+    # get top1 and top5 accuracy
+    top1_acc, top5_acc = top5_top1_accuracy(t_model, val_loader, device)
+
+    print(f"Final Top-1 Accuracy: {top1_acc:.4f}, Top-5 Accuracy: {top5_acc:.4f}")
+
+    return t_model, (top1_acc, top5_acc)
